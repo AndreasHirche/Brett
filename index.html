@@ -188,11 +188,21 @@
       });
     }
 
+    function freezeOnLastFrame() {
+      if (vid.duration && isFinite(vid.duration)) {
+        vid.currentTime = Math.max(0, vid.duration - 0.05);
+      }
+    }
+
     function goIdle() {
       vid.onended = null;
-      vid.loop    = true;
+      vid.loop    = false;
       vid.muted   = true;
       vid.src     = 'B0.mp4';
+      vid.onended = () => {
+        vid.onended = null;
+        freezeOnLastFrame();
+      };
       vid.play().catch(() => {});
     }
 
@@ -220,7 +230,6 @@
       clearInterval(ticker);
       ticker = null;
       stopChargeSound();
-      bars.forEach(b => b.classList.remove('filled', 'current'));
 
       const src = videoForLevel(level);
       level = 0;
@@ -233,7 +242,7 @@
 
       vid.onended = () => {
         vid.onended = null;
-        goIdle();
+        freezeOnLastFrame();
       };
     }
 
