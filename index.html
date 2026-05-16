@@ -121,11 +121,12 @@
       return 'B3.mp4';
     }
 
-    let level     = 0;
-    let direction = 1;
-    let ticker    = null;
-    let holding   = false;
-    let generation = 0; // invalidates stale async callbacks on new interaction
+    let level      = 0;
+    let direction  = 1;
+    let ticker     = null;
+    let holding    = false;
+    let playing    = false; // true while outcome video is running — blocks interaction
+    let generation = 0;
 
     // --- Snapshot overlay: covers the video during src-switch to avoid black flash ---
     function captureSnap() {
@@ -257,6 +258,7 @@
     }
 
     function goIdle() {
+      bars.forEach(b => b.classList.remove('filled', 'current'));
       captureSnap();
       vid.onended   = null;
       vid.oncanplay = null;
@@ -278,7 +280,7 @@
     }
 
     function startHold() {
-      if (holding) return;
+      if (holding || playing) return;
       generation++;
       vid.onended   = null;
       vid.oncanplay = null;
@@ -307,7 +309,8 @@
 
       const lv  = level;
       const gen = generation;
-      level = 0;
+      level   = 0;
+      playing = true;
 
       captureSnap();
       vid.onended   = null;
@@ -325,6 +328,7 @@
 
       vid.onended = () => {
         vid.onended = null;
+        playing = false;
         if (vid.duration && isFinite(vid.duration))
           vid.currentTime = Math.max(0, vid.duration - 0.05);
         const playSound = lv <= 2 ? playOch : playApplause;
