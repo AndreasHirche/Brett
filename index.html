@@ -204,46 +204,63 @@
       }, 300);
     }
 
-    function playOch(gen, onDone) {
-      const ctx = getAudioCtx();
-      const t = ctx.currentTime, dur = 0.5;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(280, t);
-      osc.frequency.exponentialRampToValueAtTime(140, t + dur);
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.35, t + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + dur);
-      setTimeout(() => { if (generation === gen) onDone(); }, dur * 1000 + 150);
-    }
-
-    function playSuccess(gen, onDone) {
+    function playSad(gen, onDone) {
       const ctx = getAudioCtx();
       const t = ctx.currentTime;
-      const notes = [392, 523, 659, 784, 1047]; // G4 C5 E5 G5 C6
-      const step = 0.12;
+      const notes = [659, 587, 523, 494, 440]; // E5 D5 C5 B4 A4 — absteigend
+      const step = 0.28;
       notes.forEach((freq, i) => {
         const osc  = ctx.createOscillator();
         const gain = ctx.createGain();
         const s    = t + i * step;
-        const dur  = i === notes.length - 1 ? 0.55 : step + 0.02;
-        osc.type = 'triangle';
+        const dur  = i === notes.length - 1 ? 0.65 : step + 0.05;
+        osc.type = 'sine';
         osc.frequency.value = freq;
         gain.gain.setValueAtTime(0, s);
-        gain.gain.linearRampToValueAtTime(0.28, s + 0.012);
-        gain.gain.setValueAtTime(0.28, s + dur - 0.04);
+        gain.gain.linearRampToValueAtTime(0.25, s + 0.03);
+        gain.gain.setValueAtTime(0.25, s + dur - 0.08);
         gain.gain.linearRampToValueAtTime(0, s + dur);
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.start(s);
         osc.stop(s + dur);
       });
-      const total = (notes.length - 1) * step + 0.6;
+      const total = (notes.length - 1) * step + 0.75;
+      setTimeout(() => { if (generation === gen) onDone(); }, total * 1000);
+    }
+
+    function playTriumph(gen, onDone) {
+      const ctx = getAudioCtx();
+      const t = ctx.currentTime;
+      // da-da-da-DAAA + aufsteigendes Finale
+      const seq = [
+        [392, 0.13], [392, 0.13], [392, 0.13], [523, 0.42],
+        [659, 0.13], [784, 0.13], [1047, 0.42],
+        [784, 0.13], [1047, 0.75]
+      ];
+      let pos = t;
+      seq.forEach(([freq, dur]) => {
+        const gain   = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 2200;
+        [1, 1.005].forEach(detune => {
+          const osc = ctx.createOscillator();
+          osc.type = 'sawtooth';
+          osc.frequency.value = freq * detune;
+          osc.connect(gain);
+          osc.start(pos);
+          osc.stop(pos + dur);
+        });
+        gain.gain.setValueAtTime(0, pos);
+        gain.gain.linearRampToValueAtTime(0.18, pos + 0.015);
+        gain.gain.setValueAtTime(0.18, pos + dur - 0.025);
+        gain.gain.linearRampToValueAtTime(0, pos + dur);
+        gain.connect(filter);
+        filter.connect(ctx.destination);
+        pos += dur;
+      });
+      const total = pos - t + 0.3;
       setTimeout(() => { if (generation === gen) onDone(); }, total * 1000);
     }
 
@@ -330,7 +347,7 @@
         bars.forEach(b => b.classList.remove('filled', 'current'));
         if (vid.duration && isFinite(vid.duration))
           vid.currentTime = Math.max(0, vid.duration - 0.05);
-        const playSound = lv <= 2 ? playOch : playSuccess;
+        const playSound = lv < 5 ? playSad : playTriumph;
         playSound(gen, () => goIdle());
       };
     }
