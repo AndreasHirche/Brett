@@ -222,30 +222,29 @@
       setTimeout(() => { if (generation === gen) onDone(); }, dur * 1000 + 150);
     }
 
-    function playApplause(gen, onDone) {
+    function playSuccess(gen, onDone) {
       const ctx = getAudioCtx();
-      const dur = 2.5, sr = ctx.sampleRate;
-      const buf = ctx.createBuffer(1, sr * dur, sr);
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < data.length; i++) {
-        const t = i / sr;
-        const env   = Math.pow(Math.max(0, 1 - t / dur), 0.3);
-        const burst = 0.5 + 0.5 * Math.sin(t * 2 * Math.PI * 5.5);
-        data[i] = (Math.random() * 2 - 1) * env * burst;
-      }
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.value = 2500;
-      filter.Q.value = 0.3;
-      const gain = ctx.createGain();
-      gain.gain.value = 0.7;
-      src.connect(filter);
-      filter.connect(gain);
-      gain.connect(ctx.destination);
-      src.start();
-      setTimeout(() => { if (generation === gen) onDone(); }, dur * 1000);
+      const t = ctx.currentTime;
+      const notes = [392, 523, 659, 784, 1047]; // G4 C5 E5 G5 C6
+      const step = 0.12;
+      notes.forEach((freq, i) => {
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const s    = t + i * step;
+        const dur  = i === notes.length - 1 ? 0.55 : step + 0.02;
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, s);
+        gain.gain.linearRampToValueAtTime(0.28, s + 0.012);
+        gain.gain.setValueAtTime(0.28, s + dur - 0.04);
+        gain.gain.linearRampToValueAtTime(0, s + dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(s);
+        osc.stop(s + dur);
+      });
+      const total = (notes.length - 1) * step + 0.6;
+      setTimeout(() => { if (generation === gen) onDone(); }, total * 1000);
     }
 
     function paint() {
@@ -258,7 +257,6 @@
     }
 
     function goIdle() {
-      bars.forEach(b => b.classList.remove('filled', 'current'));
       captureSnap();
       vid.onended   = null;
       vid.oncanplay = null;
@@ -329,9 +327,10 @@
       vid.onended = () => {
         vid.onended = null;
         playing = false;
+        bars.forEach(b => b.classList.remove('filled', 'current'));
         if (vid.duration && isFinite(vid.duration))
           vid.currentTime = Math.max(0, vid.duration - 0.05);
-        const playSound = lv <= 2 ? playOch : playApplause;
+        const playSound = lv <= 2 ? playOch : playSuccess;
         playSound(gen, () => goIdle());
       };
     }
