@@ -23,12 +23,28 @@
       width: 100%;
       max-width: 900px;
       position: relative;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 4px;
+      overflow: hidden;
     }
 
     video {
-      width: 100%;
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
       display: block;
-      border-radius: 4px;
+      object-fit: contain;
+    }
+
+    #snap {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.12s;
+      z-index: 2;
     }
 
     #meter {
@@ -48,39 +64,23 @@
       transition: background 0.08s, box-shadow 0.08s;
     }
 
-    /* bar heights */
     .bar:nth-child(1) { height: 25%; }
     .bar:nth-child(2) { height: 45%; }
     .bar:nth-child(3) { height: 62%; }
     .bar:nth-child(4) { height: 80%; }
     .bar:nth-child(5) { height: 100%; }
 
-    /* filled (below current) */
     .bar.filled:nth-child(1),
     .bar.filled:nth-child(2) { background: #2ecc71; }
-
     .bar.filled:nth-child(3),
     .bar.filled:nth-child(4) { background: #f39c12; }
-
     .bar.filled:nth-child(5) { background: #e74c3c; }
 
-    /* current active bar */
     .bar.current:nth-child(1),
-    .bar.current:nth-child(2) {
-      background: #2ecc71;
-      box-shadow: 0 0 12px #2ecc71aa;
-    }
-
+    .bar.current:nth-child(2) { background: #2ecc71; box-shadow: 0 0 12px #2ecc71aa; }
     .bar.current:nth-child(3),
-    .bar.current:nth-child(4) {
-      background: #f39c12;
-      box-shadow: 0 0 12px #f39c12aa;
-    }
-
-    .bar.current:nth-child(5) {
-      background: #e74c3c;
-      box-shadow: 0 0 16px #e74c3ccc;
-    }
+    .bar.current:nth-child(4) { background: #f39c12; box-shadow: 0 0 12px #f39c12aa; }
+    .bar.current:nth-child(5) { background: #e74c3c; box-shadow: 0 0 16px #e74c3ccc; }
 
     #hint {
       color: #444;
@@ -95,6 +95,7 @@
 
   <div id="video-wrap">
     <video id="vid" playsinline preload="auto"></video>
+    <canvas id="snap"></canvas>
   </div>
 
   <div id="meter">
@@ -108,9 +109,11 @@
   <p id="hint">Halten zum Laden &nbsp;·&nbsp; Loslassen zum Spielen</p>
 
   <script>
-    const vid  = document.getElementById('vid');
-    const bars = document.querySelectorAll('.bar');
-    const STEP = 220;
+    const vid     = document.getElementById('vid');
+    const snap    = document.getElementById('snap');
+    const snapCtx = snap.getContext('2d');
+    const bars    = document.querySelectorAll('.bar');
+    const STEP    = 220;
 
     function videoForLevel(lv) {
       if (lv <= 2) return 'B1.mp4';
@@ -122,6 +125,27 @@
     let direction = 1;
     let ticker    = null;
     let holding   = false;
+    let generation = 0; // invalidates stale async callbacks on new interaction
+
+    // --- Snapshot overlay: covers the video during src-switch to avoid black flash ---
+    function captureSnap() {
+      snap.width  = snap.offsetWidth;
+      snap.height = snap.offsetHeight;
+      if (vid.videoWidth > 0) {
+        const vw = vid.videoWidth, vh = vid.videoHeight;
+        const sw = snap.width,     sh = snap.height;
+        const scale = Math.min(sw / vw, sh / vh);
+        const dw = vw * scale, dh = vh * scale;
+        snapCtx.fillStyle = '#000';
+        snapCtx.fillRect(0, 0, sw, sh);
+        snapCtx.drawImage(vid, (sw - dw) / 2, (sh - dh) / 2, dw, dh);
+      }
+      snap.style.opacity = '1';
+    }
+
+    function releaseSnap() {
+      snap.style.opacity = '0';
+    }
 
     // --- Audio ---
     let audioCtx   = null;
@@ -160,7 +184,7 @@
 
     function updateChargeSound(lv) {
       if (!chargeOsc || !audioCtx) return;
-      const freq = 80 + (lv - 1) * 130; // 80 → 210 → 340 → 470 → 600 Hz
+      const freq = 80 + (lv - 1) * 130;
       const t = audioCtx.currentTime;
       chargeOsc.frequency.cancelScheduledValues(t);
       chargeOsc.frequency.setValueAtTime(chargeOsc.frequency.value, t);
@@ -179,6 +203,50 @@
       }, 300);
     }
 
+    function playOch(gen, onDone) {
+      const ctx = getAudioCtx();
+      const t = ctx.currentTime, dur = 0.5;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(280, t);
+      osc.frequency.exponentialRampToValueAtTime(140, t + dur);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.35, t + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + dur);
+      setTimeout(() => { if (generation === gen) onDone(); }, dur * 1000 + 150);
+    }
+
+    function playApplause(gen, onDone) {
+      const ctx = getAudioCtx();
+      const dur = 2.5, sr = ctx.sampleRate;
+      const buf = ctx.createBuffer(1, sr * dur, sr);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / sr;
+        const env   = Math.pow(Math.max(0, 1 - t / dur), 0.3);
+        const burst = 0.5 + 0.5 * Math.sin(t * 2 * Math.PI * 5.5);
+        data[i] = (Math.random() * 2 - 1) * env * burst;
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 2500;
+      filter.Q.value = 0.3;
+      const gain = ctx.createGain();
+      gain.gain.value = 0.7;
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+      src.start();
+      setTimeout(() => { if (generation === gen) onDone(); }, dur * 1000);
+    }
+
     function paint() {
       bars.forEach((b, i) => {
         const barLevel = i + 1;
@@ -188,27 +256,33 @@
       });
     }
 
-    function freezeOnLastFrame() {
-      if (vid.duration && isFinite(vid.duration)) {
-        vid.currentTime = Math.max(0, vid.duration - 0.05);
-      }
-    }
-
     function goIdle() {
-      vid.onended = null;
-      vid.loop    = false;
-      vid.muted   = true;
-      vid.src     = 'B0.mp4';
+      captureSnap();
+      vid.onended   = null;
+      vid.oncanplay = null;
+      vid.loop      = false;
+      vid.muted     = true;
+      vid.src       = 'B0.mp4';
+
+      vid.oncanplay = () => {
+        vid.oncanplay = null;
+        releaseSnap();
+        vid.play().catch(() => {});
+      };
+
       vid.onended = () => {
         vid.onended = null;
-        freezeOnLastFrame();
+        if (vid.duration && isFinite(vid.duration))
+          vid.currentTime = Math.max(0, vid.duration - 0.05);
       };
-      vid.play().catch(() => {});
     }
 
     function startHold() {
       if (holding) return;
-      vid.onended = null;
+      generation++;
+      vid.onended   = null;
+      vid.oncanplay = null;
+      releaseSnap();
       holding   = true;
       level     = 1;
       direction = 1;
@@ -231,18 +305,30 @@
       ticker = null;
       stopChargeSound();
 
-      const src = videoForLevel(level);
+      const lv  = level;
+      const gen = generation;
       level = 0;
 
-      vid.loop  = false;
-      vid.muted = false;
-      vid.src   = src;
+      captureSnap();
+      vid.onended   = null;
+      vid.oncanplay = null;
+      vid.loop      = false;
+      vid.muted     = false;
+      vid.src       = videoForLevel(lv);
       vid.currentTime = 0;
-      vid.play().catch(() => {});
+
+      vid.oncanplay = () => {
+        vid.oncanplay = null;
+        releaseSnap();
+        vid.play().catch(() => {});
+      };
 
       vid.onended = () => {
         vid.onended = null;
-        freezeOnLastFrame();
+        if (vid.duration && isFinite(vid.duration))
+          vid.currentTime = Math.max(0, vid.duration - 0.05);
+        const playSound = lv <= 2 ? playOch : playApplause;
+        playSound(gen, () => goIdle());
       };
     }
 
