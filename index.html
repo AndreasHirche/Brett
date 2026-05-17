@@ -19,9 +19,16 @@
       touch-action: none;
     }
 
-    #video-wrap {
+    /* Row that holds left meter + video + right meter */
+    #player-row {
+      display: flex;
+      align-items: center;
       width: 100%;
       max-width: 900px;
+    }
+
+    #video-wrap {
+      flex: 1;
       position: relative;
       aspect-ratio: 16 / 9;
       background: #000;
@@ -47,6 +54,27 @@
       z-index: 2;
     }
 
+    /* TKD command overlay */
+    #cmd {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, sans-serif;
+      font-weight: 900;
+      font-size: clamp(1.6rem, 5.5vw, 3.8rem);
+      letter-spacing: 0.14em;
+      color: #fff;
+      text-shadow: 0 0 28px rgba(255,255,255,0.35), 0 2px 14px rgba(0,0,0,0.95);
+      pointer-events: none;
+      z-index: 10;
+      opacity: 0;
+      transition: opacity 0.35s ease;
+    }
+    #cmd.visible { opacity: 1; }
+
+    /* ── Bottom meter (portrait) ── */
     #meter {
       display: flex;
       align-items: flex-end;
@@ -60,16 +88,45 @@
       width: 36px;
       border-radius: 3px 3px 0 0;
       background: #222;
-      position: relative;
       transition: background 0.08s, box-shadow 0.08s;
     }
 
-    .bar:nth-child(1) { height: 25%; }
-    .bar:nth-child(2) { height: 45%; }
-    .bar:nth-child(3) { height: 62%; }
-    .bar:nth-child(4) { height: 80%; }
-    .bar:nth-child(5) { height: 100%; }
+    /* Bottom meter bar heights */
+    #meter .bar:nth-child(1) { height: 25%; }
+    #meter .bar:nth-child(2) { height: 45%; }
+    #meter .bar:nth-child(3) { height: 62%; }
+    #meter .bar:nth-child(4) { height: 80%; }
+    #meter .bar:nth-child(5) { height: 100%; }
 
+    /* ── Side meters (landscape) ── */
+    .side-meter {
+      display: none;
+      flex-direction: column-reverse; /* bar 1 at bottom, bar 5 at top */
+      justify-content: center;
+      gap: 8px;
+      padding: 8px;
+      width: 56px;
+      align-self: stretch;
+    }
+
+    /* Left bars grow rightward (toward video) */
+    #meter-left  { align-items: flex-start; }
+    /* Right bars grow leftward (toward video) */
+    #meter-right { align-items: flex-end; }
+
+    .side-meter .bar {
+      height: 14px;
+      width: 0; /* overridden per nth-child */
+      border-radius: 3px;
+    }
+
+    .side-meter .bar:nth-child(1) { width: 25%; }
+    .side-meter .bar:nth-child(2) { width: 45%; }
+    .side-meter .bar:nth-child(3) { width: 62%; }
+    .side-meter .bar:nth-child(4) { width: 80%; }
+    .side-meter .bar:nth-child(5) { width: 100%; }
+
+    /* ── Filled / current states — all meters ── */
     .bar.filled:nth-child(1),
     .bar.filled:nth-child(2) { background: #2ecc71; }
     .bar.filled:nth-child(3),
@@ -89,13 +146,54 @@
       letter-spacing: 0.06em;
       margin-top: 4px;
     }
+
+    /* ── Mobile landscape ── */
+    @media (orientation: landscape) and (max-height: 600px) {
+      body { padding: 0; }
+
+      #player-row {
+        width: 100vw;
+        height: 100vh;
+        max-width: none;
+        align-items: stretch;
+      }
+
+      #video-wrap {
+        aspect-ratio: unset;
+        height: 100%;
+        border-radius: 0;
+      }
+
+      .side-meter { display: flex; }
+      #meter      { display: none; }
+      #hint       { display: none; }
+    }
   </style>
 </head>
 <body>
 
-  <div id="video-wrap">
-    <video id="vid" playsinline preload="auto"></video>
-    <canvas id="snap"></canvas>
+  <div id="player-row">
+    <div id="meter-left" class="side-meter">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+
+    <div id="video-wrap">
+      <video id="vid" playsinline preload="auto"></video>
+      <canvas id="snap"></canvas>
+      <div id="cmd"></div>
+    </div>
+
+    <div id="meter-right" class="side-meter">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
   </div>
 
   <div id="meter">
@@ -109,11 +207,16 @@
   <p id="hint">Halten zum Laden &nbsp;·&nbsp; Loslassen zum Spielen</p>
 
   <script>
-    const vid     = document.getElementById('vid');
-    const snap    = document.getElementById('snap');
-    const snapCtx = snap.getContext('2d');
-    const bars    = document.querySelectorAll('.bar');
-    const STEP    = 220;
+    const vid      = document.getElementById('vid');
+    const snap     = document.getElementById('snap');
+    const snapCtx  = snap.getContext('2d');
+    const cmd      = document.getElementById('cmd');
+    const STEP     = 220;
+
+    const bottomBars = document.querySelectorAll('#meter .bar');
+    const leftBars   = document.querySelectorAll('#meter-left .bar');
+    const rightBars  = document.querySelectorAll('#meter-right .bar');
+    const allBarSets = [bottomBars, leftBars, rightBars];
 
     function videoForLevel(lv) {
       if (lv <= 2) return 'B1.mp4';
@@ -125,10 +228,16 @@
     let direction  = 1;
     let ticker     = null;
     let holding    = false;
-    let playing    = false; // true while outcome video is running — blocks interaction
+    let playing    = false;
     let generation = 0;
 
-    // --- Snapshot overlay: covers the video during src-switch to avoid black flash ---
+    // --- Command overlay ---
+    function setCmd(text) {
+      cmd.textContent = text;
+      cmd.classList.toggle('visible', !!text);
+    }
+
+    // --- Snapshot overlay ---
     function captureSnap() {
       snap.width  = snap.offsetWidth;
       snap.height = snap.offsetHeight;
@@ -144,9 +253,7 @@
       snap.style.opacity = '1';
     }
 
-    function releaseSnap() {
-      snap.style.opacity = '0';
-    }
+    function releaseSnap() { snap.style.opacity = '0'; }
 
     // --- Audio ---
     let audioCtx   = null;
@@ -207,7 +314,7 @@
     function playSad(gen, onDone) {
       const ctx = getAudioCtx();
       const t = ctx.currentTime;
-      const notes = [659, 587, 523, 494, 440]; // E5 D5 C5 B4 A4 — absteigend
+      const notes = [659, 587, 523, 494, 440];
       const step = 0.28;
       notes.forEach((freq, i) => {
         const osc  = ctx.createOscillator();
@@ -232,7 +339,7 @@
     function playSuccess(gen, onDone) {
       const ctx = getAudioCtx();
       const t = ctx.currentTime;
-      const notes = [392, 523, 659, 784, 1047]; // G4 C5 E5 G5 C6
+      const notes = [392, 523, 659, 784, 1047];
       const step = 0.12;
       notes.forEach((freq, i) => {
         const osc  = ctx.createOscillator();
@@ -257,7 +364,6 @@
     function playTriumph(gen, onDone) {
       const ctx = getAudioCtx();
       const t = ctx.currentTime;
-      // da-da-da-DAAA + aufsteigendes Finale
       const seq = [
         [392, 0.13], [392, 0.13], [392, 0.13], [523, 0.42],
         [659, 0.13], [784, 0.13], [1047, 0.42],
@@ -290,15 +396,24 @@
     }
 
     function paint() {
-      bars.forEach((b, i) => {
-        const barLevel = i + 1;
-        b.classList.remove('filled', 'current');
-        if (barLevel < level)  b.classList.add('filled');
-        if (barLevel === level) b.classList.add('current');
+      allBarSets.forEach(set => {
+        set.forEach((b, i) => {
+          const barLevel = i + 1;
+          b.classList.remove('filled', 'current');
+          if (barLevel < level)  b.classList.add('filled');
+          if (barLevel === level) b.classList.add('current');
+        });
       });
     }
 
+    function clearBars() {
+      allBarSets.forEach(set =>
+        set.forEach(b => b.classList.remove('filled', 'current'))
+      );
+    }
+
     function goIdle() {
+      setCmd('CHARYOT!');
       captureSnap();
       vid.onended   = null;
       vid.oncanplay = null;
@@ -316,6 +431,7 @@
         vid.onended = null;
         if (vid.duration && isFinite(vid.duration))
           vid.currentTime = Math.max(0, vid.duration - 0.05);
+        setCmd('SIJAK!');
       };
     }
 
@@ -325,6 +441,7 @@
       vid.onended   = null;
       vid.oncanplay = null;
       releaseSnap();
+      setCmd('');
       holding   = true;
       level     = 1;
       direction = 1;
@@ -369,7 +486,8 @@
       vid.onended = () => {
         vid.onended = null;
         playing = false;
-        bars.forEach(b => b.classList.remove('filled', 'current'));
+        clearBars();
+        setCmd('HAE SAN!');
         if (vid.duration && isFinite(vid.duration))
           vid.currentTime = Math.max(0, vid.duration - 0.05);
         const playSound = lv <= 2 ? playSad : lv <= 4 ? playSuccess : playTriumph;
