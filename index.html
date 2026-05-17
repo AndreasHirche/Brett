@@ -487,11 +487,17 @@
         vid.onended = null;
         playing = false;
         clearBars();
-        setCmd('HAE SAN!');
         if (vid.duration && isFinite(vid.duration))
           vid.currentTime = Math.max(0, vid.duration - 0.05);
+        setCmd('KYONG YE!');
         const playSound = lv <= 2 ? playSad : lv <= 4 ? playSuccess : playTriumph;
-        playSound(gen, () => goIdle());
+        setTimeout(() => {
+          if (generation !== gen) return;
+          setCmd('HAE SAN!');
+          playSound(gen, () => setTimeout(() => {
+            if (generation === gen) goIdle();
+          }, 700));
+        }, 750);
       };
     }
 
